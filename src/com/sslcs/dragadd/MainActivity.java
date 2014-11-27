@@ -1,97 +1,299 @@
 package com.sslcs.dragadd;
 
 import android.app.Activity;
-import android.content.ClipData;
-import android.content.ClipDescription;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Point;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
-import android.view.MotionEvent;
-import android.view.View;
-import android.widget.TextView;
+import android.util.Log;
+import android.view.*;
+import android.view.ViewGroup.LayoutParams;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
+import android.widget.AdapterView;
+import android.widget.FrameLayout;
+import android.widget.GridView;
+import android.widget.Toast;
 
-public class MainActivity extends Activity
+/**
+ * This activity presents a screen with a grid on which images can be added and moved around.
+ * It also defines areas on the screen where the dragged views can be dropped. Feedback is
+ * provided to the user as the objects are dragged over these drop zones.
+ * <p/>
+ * <p> Like the DragActivity in the previous version of the DragView example application, the
+ * code here is derived from the Android Launcher code.
+ * <p/>
+ * <p> The original Launcher code required a long click (press) to initiate a drag-drop sequence.
+ * If you want to see that behavior, set the variable mLongClickStartsDrag to true.
+ * It is set to false below, which means that any touch event starts a drag-drop.
+ */
+
+public class MainActivity extends Activity implements View.OnLongClickListener, View.OnClickListener, View.OnTouchListener //  , AdapterView.OnItemClickListener
 {
-    @Override
-    public void onCreate(Bundle savedInstanceState)
+    public static final boolean Debugging = false;   // Use this to see extra toast messages.
+
+    // Constants
+    private static final int HIDE_TRASHCAN_MENU_ID = Menu.FIRST;
+    private static final int SHOW_TRASHCAN_MENU_ID = Menu.FIRST + 1;
+    private static final int ADD_OBJECT_MENU_ID = Menu.FIRST + 2;
+    private static final int CHANGE_TOUCH_MODE_MENU_ID = Menu.FIRST + 3;
+
+    // Variables
+    private DragController mDragController;   // Object that handles a drag-drop sequence. It intersacts with DragSource and DropTarget objects.
+    private DragLayer mDragLayer;             // The ViewGroup within which an object can be dragged.
+    private DeleteZone mDeleteZone;           // A drop target that is used to remove objects from the screen.
+    private int mImageCount = 0;              // The number of images that have been added to screen.
+    private ImageCell mLastNewCell = null;    // The last ImageCell added to the screen when Add Image is clicked.
+    // Otherwise, any touch event starts a drag.
+    private boolean mLongClickStartsDrag = false;   // If true, it takes a long click to start the drag operation.
+
+    /**
+     * Add a new image so the user can move it around. It shows up in the image_source_frame
+     * part of the screen.
+     *
+     * @param resourceId int - the resource id of the image to be added
+     */
+    public void addNewImageToScreen(int resourceId)
+    {
+        if (mLastNewCell != null)
+        {
+            mLastNewCell.setVisibility(View.GONE);
+        }
+
+        FrameLayout imageHolder = (FrameLayout) findViewById(R.id.image_source_frame);
+        if (imageHolder != null)
+        {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.FILL_PARENT, Gravity.CENTER);
+            ImageCell newView = new ImageCell(this);
+            newView.setImageResource(resourceId);
+            imageHolder.addView(newView, lp);
+            newView.mEmpty = false;
+            newView.mCellNumber = -1;
+            mLastNewCell = newView;
+            mImageCount++;
+
+            // Have this activity listen to touch and click events for the view.
+            newView.setOnClickListener(this);
+            newView.setOnLongClickListener(this);
+            newView.setOnTouchListener(this);
+        }
+    }
+
+    /**
+     * Add one of the images to the screen so the user has a new image to move around.
+     * See addImageToScreen.
+     */
+    public void addNewImageToScreen()
+    {
+        int resourceId = R.drawable.hello;
+
+        int m = mImageCount % 3;
+        if (m == 1)
+        {
+            resourceId = R.drawable.photo1;
+        }
+        else if (m == 2)
+        {
+            resourceId = R.drawable.photo2;
+        }
+        addNewImageToScreen(resourceId);
+    }
+
+    /**
+     * Handle a click on a view.
+     */
+    public void onClick(View v)
+    {
+        if (mLongClickStartsDrag)
+        {
+            // Tell the user that it takes a long click to start dragging.
+            toast("Press and hold to drag an image.");
+        }
+    }
+
+    /**
+     * Handle a click of the Add Image button
+     */
+    public void onClickAddImage(View v)
+    {
+        addNewImageToScreen();
+    }
+
+    /**
+     * onCreate - called when the activity is first created.
+     * <p/>
+     * Creates a drag controller and sets up three views so click and long click on the views are sent to this activity.
+     * The onLongClick method starts a drag sequence.
+     */
+    protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        final TextView tvDrag = (TextView) findViewById(R.id.tv_drag);
-        tvDrag.setOnTouchListener(new View.OnTouchListener()
+        GridView gridView = (GridView) findViewById(R.id.image_grid_view);
+
+        if (gridView == null)
         {
-            @Override
-            public boolean onTouch(View v, MotionEvent event)
+            toast("Unable to find GridView");
+        }
+        else
+        {
+            gridView.setAdapter(new ImageCellAdapter(this));
+            // gridView.setOnItemClickListener (this);
+        }
+
+        mDragController = new DragController(this);
+        mDragLayer = (DragLayer) findViewById(R.id.drag_layer);
+        mDragLayer.setDragController(mDragController);
+        mDragLayer.setGridView(gridView);
+
+        mDragController.setDragListener(mDragLayer);
+        // mDragController.addDropTarget (mDragLayer);
+
+        mDeleteZone = (DeleteZone) findViewById(R.id.delete_zone_view);
+
+        // Give the user a little guidance.
+        Toast.makeText(getApplicationContext(), getResources().getString(R.string.instructions), Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * Build a menu for the activity.
+     */
+    public boolean onCreateOptionsMenu(Menu menu)
+    {
+        super.onCreateOptionsMenu(menu);
+        menu.add(0, HIDE_TRASHCAN_MENU_ID, 0, "Hide Trashcan").setShortcut('1', 'c');
+        menu.add(0, SHOW_TRASHCAN_MENU_ID, 0, "Show Trashcan").setShortcut('2', 'c');
+        menu.add(0, ADD_OBJECT_MENU_ID, 0, "Add View").setShortcut('9', 'z');
+        menu.add(0, CHANGE_TOUCH_MODE_MENU_ID, 0, "Change Touch Mode");
+        return true;
+    }
+
+    /**
+     * Handle a click of an item in the grid of cells.
+     */
+    public void onItemClick(AdapterView<?> parent, View v, int position, long id)
+    {
+        ImageCell i = (ImageCell) v;
+        trace("onItemClick in view: " + i.mCellNumber);
+    }
+
+    /**
+     * Handle a long click.
+     * If mLongClick only is true, this will be the only way to start a drag operation.
+     *
+     * @param v View
+     * @return boolean - true indicates that the event was handled
+     */
+    public boolean onLongClick(View v)
+    {
+        if (mLongClickStartsDrag)
+        {
+            // Make sure the drag was started by a long press as opposed to a long click.
+            // (Note: I got this from the Workspace object in the Android Launcher code.
+            //  I think it is here to ensure that the device is still in touch mode as we start the drag operation.)
+            if (!v.isInTouchMode())
             {
-                startDrag(tvDrag);
-                return true;
+                toast("isInTouchMode returned false. Try touching the view again.");
+                return false;
             }
-        });
+            return startDrag(v);
+        }
+
+        // If we get here, return false to indicate that we have not taken care of the event.
+        return false;
     }
 
-    private void startDrag(TextView view)
-    {
-        ClipData.Item item = new ClipData.Item(view.getText());
+    /**
+     * Perform an action in response to a menu item being clicked.
+     */
 
-        ClipData clipData = new ClipData(view.getText(), new String[]{ClipDescription.MIMETYPE_TEXT_PLAIN}, item);
-        view.startDrag(clipData, new MyDragShadowBuilder(view), null, 0);
+    public boolean onOptionsItemSelected(MenuItem item)
+    {
+        switch (item.getItemId())
+        {
+            case HIDE_TRASHCAN_MENU_ID:
+                if (mDeleteZone != null)
+                {
+                    mDeleteZone.setVisibility(View.INVISIBLE);
+                }
+                return true;
+            case SHOW_TRASHCAN_MENU_ID:
+                if (mDeleteZone != null)
+                {
+                    mDeleteZone.setVisibility(View.VISIBLE);
+                }
+                return true;
+            case ADD_OBJECT_MENU_ID:
+                // Add a new object to the screen;
+                addNewImageToScreen();
+                return true;
+            case CHANGE_TOUCH_MODE_MENU_ID:
+                mLongClickStartsDrag = !mLongClickStartsDrag;
+                String message = mLongClickStartsDrag ? "Changed touch mode. Drag now starts on long touch (click)."
+                    : "Changed touch mode. Drag now starts on touch (click).";
+                Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+                return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
-    private static class MyDragShadowBuilder extends View.DragShadowBuilder
+    /**
+     * This is the starting point for a drag operation if mLongClickStartsDrag is false.
+     * It looks for the down event that gets generated when a user touches the screen.
+     * Only that initiates the drag-drop sequence.
+     */
+    public boolean onTouch(View v, MotionEvent ev)
     {
-
-        // The drag shadow image, defined as a drawable thing
-        private static Drawable shadow;
-
-        // Defines the constructor for myDragShadowBuilder
-        public MyDragShadowBuilder(View v)
+        // If we are configured to start only on a long click, we are not going to handle any events here.
+        if (mLongClickStartsDrag)
         {
-            // Stores the View parameter passed to myDragShadowBuilder.
-            super(v);
-
-            // Creates a draggable image that will fill the Canvas provided by the system.
-            shadow = new ColorDrawable(Color.LTGRAY);
+            return false;
         }
 
-        // Defines a callback that sends the drag shadow dimensions and touch point back to the
-        // system.
-        @Override
-        public void onProvideShadowMetrics(Point size, Point touch)
+        boolean handledHere = false;
+        final int action = ev.getAction();
+        // In the situation where a long click is not needed to initiate a drag, simply start on the down event.
+        if (action == MotionEvent.ACTION_DOWN)
         {
-            // Defines local variables
-            int width, height;
-
-            // Sets the width of the shadow to half the width of the original View
-            width = getView().getWidth() / 2;
-
-            // Sets the height of the shadow to half the height of the original View
-            height = getView().getHeight() / 2;
-
-            // The drag shadow is a ColorDrawable. This sets its dimensions to be the same as the
-            // Canvas that the system will provide. As a result, the drag shadow will fill the
-            // Canvas.
-            shadow.setBounds(0, 0, width, height);
-
-            // Sets the size parameter's width and height values. These get back to the system
-            // through the size parameter.
-            size.set(width, height);
-
-            // Sets the touch point's position to be in the middle of the drag shadow
-            touch.set(width / 2, height / 2);
+            handledHere = startDrag(v);
+            if (handledHere)
+            {
+                v.performClick();
+            }
         }
+        return handledHere;
+    }
 
-        // Defines a callback that draws the drag shadow in a Canvas that the system constructs
-        // from the dimensions passed in onProvideShadowMetrics().
-        @Override
-        public void onDrawShadow(Canvas canvas)
+    /**
+     * Start dragging a view.
+     */
+    public boolean startDrag(View v)
+    {
+        DragSource dragSource = (DragSource) v;
+
+        // We are starting a drag. Let the DragController handle it.
+        mDragController.startDrag(v, dragSource, dragSource, DragController.DRAG_ACTION_MOVE);
+        return true;
+    }
+
+    /**
+     * Show a string on the screen via Toast.
+     *
+     * @param msg String
+     */
+    public void toast(String msg)
+    {
+        Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * Send a message to the debug log. Also display it using Toast if Debugging is true.
+     */
+    public void trace(String msg)
+    {
+        Log.d("DragActivity", msg);
+        if (!Debugging)
         {
-
-            // Draws the ColorDrawable in the Canvas passed in from the system.
-            shadow.draw(canvas);
+            return;
         }
+        toast(msg);
     }
 }
