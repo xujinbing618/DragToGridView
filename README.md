@@ -1,8 +1,7 @@
-DragAdd
+DragToGridView
 =======
 
-Drag a view and Add to a viewgroup
+Drag view  to a GridView 
 
-https://blahti.wordpress.com/2012/03/03/improved-drag-drop-for-gridview/
-
-http://developer.android.com/guide/topics/ui/drag-drop.html
+Copy from : 
+https://blahti.wordpress.com/2012/03/03/improved-drag-drop-for-gridview
